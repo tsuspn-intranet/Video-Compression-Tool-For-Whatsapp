@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Compressor — 1080×1920 H.264</title>
+<script>
+// Registers coi-sw.js so this page can become cross-origin isolated even on
+// a static host (like GitHub Pages) that can't set custom response headers.
+// If the page is already isolated (e.g. Vercel with the headers in
+// vercel.json) this does nothing.
+(function () {
+  if (window.crossOriginIsolated || !('serviceWorker' in navigator)) return;
+  const reloadedKey = 'coiSwReloaded';
+  navigator.serviceWorker.register('./coi-sw.js').then(function (reg) {
+    if (reg.active && !navigator.serviceWorker.controller) {
+      // Registered but not yet controlling this load — reload once to pick it up.
+      if (!sessionStorage.getItem(reloadedKey)) {
+        sessionStorage.setItem(reloadedKey, '1');
+        window.location.reload();
+      }
+    }
+  }).catch(function (err) {
+    console.warn('coi-sw registration failed:', err);
+  });
+  navigator.serviceWorker.addEventListener('controllerchange', function () {
+    if (!sessionStorage.getItem(reloadedKey)) {
+      sessionStorage.setItem(reloadedKey, '1');
+      window.location.reload();
+    }
+  });
+})();
+</script>
+<style>
+  :root{
+    --bg:#f4f5f7; --panel:#ffffff; --border:#d9dce1; --text:#1f2328;
+    --muted:#5a6270; --accent:#2f5fb3; --accent-dark:#244a8f; --ok:#1a7f4b; --err:#b3261e;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--text); padding:24px;
+  }
+  .container{max-width:640px;margin:0 auto}
+  h1{font-size:1.35rem;margin:0 0 4px}
+  .subtitle{color:var(--muted);font-size:0.85rem;margin:0 0 20px;line-height:1.5}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px;margin-bottom:14px}
+  #dropzone{
+    border:2px dashed var(--border); border-radius:8px; padding:28px 16px; text-align:center;
+    cursor:pointer; background:var(--panel); color:var(--muted); font-size:0.9rem;
+  }
+  #dropzone.drag{border-color:var(--accent); color:var(--accent)}
+  #fileInfo{margin-top:8px;font-size:0.85rem;color:var(--text)}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;font-size:0.88rem}
+  .row:last-child{margin-bottom:0}
+  select,input[type=range]{accent-color:var(--accent)}
+  select{padding:4px 6px;border-radius:4px;border:1px solid var(--border);background:#fff}
+  .specs{display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:0.82rem;color:var(--muted)}
+  .specs b{color:var(--text)}
+  button{
+    width:100%; padding:11px; border:none;border-radius:6px; background:var(--accent);
+    color:#fff; font-size:0.95rem; cursor:pointer; margin-top:4px;
+  }
+  button:disabled{background:#a9b2c3;cursor:not-allowed}
+  button:hover:not(:disabled){background:var(--accent-dark)}
+  #progressWrap{margin-top:14px}
+  #progressBar{height:8px;background:#e6e8eb;border-radius:4px;overflow:hidden}
+  #progressFill{height:100%;width:0%;background:var(--accent);transition:width .15s}
+  #progressText{font-size:0.8rem;color:var(--muted);margin-top:4px}
+  #status{font-size:0.85rem;margin-top:8px}
+  #status.err{color:var(--err)}
+  #status.ok{color:var(--ok)}
+  #log{
+    background:#111417;color:#c7ccd4;font-size:0.72rem;line-height:1.5;padding:10px;border-radius:6px;
+    max-height:160px;overflow:auto;display:none;white-space:pre-wrap;word-break:break-all;
+  }
+  #result{display:none;margin-top:14px}
+  video{width:100%;border-radius:6px;background:#000;display:block;margin-bottom:10px}
+  #downloadBtn{
+    display:block;width:100%;text-align:center;padding:10px;background:var(--ok);color:#fff;border-radius:6px;
+    border:none;font-size:0.9rem;cursor:pointer;
+  }
+  #downloadBtn:hover{filter:brightness(0.92)}
+  .resultInfo{font-size:0.8rem;color:var(--muted);margin-top:8px;display:flex;justify-content:space-between}
+  details summary{cursor:pointer;font-size:0.8rem;color:var(--muted);margin-top:8px}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Video Compressor</h1>
+  <p class="subtitle">Runs entirely in your browser (ffmpeg.wasm) — no upload to any server.</p>
+
+  <div class="panel">
+    <div class="specs">
+      <div><b>Resolution:</b> 1080×1920</div>
+      <div><b>Frame rate:</b> 30 fps</div>
+      <div><b>Codec:</b> H.264 High Profile</div>
+      <div><b>CRF:</b> <span id="crfSpecVal">21</span></div>
+      <div><b>Max bitrate:</b> ≈5 Mbps</div>
+      <div><b>Audio:</b> AAC 128 kbps</div>
+      <div><b>Container:</b> MP4 (faststart)</div>
+      <div><b>Length:</b> <span id="lengthSpec">trimmed to 30s</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div id="dropzone">
+      <div id="dzText">Drop a video here, or click to choose a file</div>
+      <div id="fileInfo"></div>
+    </div>
+    <input type="file" id="fileInput" accept="video/*" hidden>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <label for="crf">Quality (CRF, lower = larger/better)</label>
+      <span><input type="range" id="crf" min="20" max="22" value="21" step="1"> <span id="crfVal">21</span></span>
+    </div>
+    <div class="row">
+      <label for="fitMode">Frame fit</label>
+      <select id="fitMode">
+        <option value="fill">Fill — crop to 1080×1920</option>
+        <option value="fit">Fit — letterbox, no crop</option>
+      </select>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="trimEnabled" checked> Trim video to</label>
+      <span>
+        start <input type="number" id="trimStart" min="0" value="0" step="1" style="width:56px;padding:3px;border-radius:4px;border:1px solid var(--border)">s,
+        length <input type="number" id="trimDuration" min="1" value="30" step="1" style="width:56px;padding:3px;border-radius:4px;border:1px solid var(--border)">s
+      </span>
+    </div>
+  </div>
+
+  <button id="startBtn" disabled>Compress Video</button>
+
+  <div id="progressWrap" style="display:none">
+    <div id="progressBar"><div id="progressFill"></div></div>
+    <div id="progressText">Loading encoder…</div>
+  </div>
+  <div id="status"></div>
+  <details id="logWrap" style="display:none">
+    <summary>Encoder log</summary>
+    <div id="log" style="display:block"></div>
+  </details>
+
+  <div id="result">
+    <video id="outputVideo" controls></video>
+    <button id="downloadBtn" type="button">Download MP4</button>
+    <div class="resultInfo">
+      <span id="sizeInfo"></span>
+      <span id="ratioInfo"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+let ffmpeg = null;
+let fetchFileFn = null;
+
+function loadScriptTag(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('could not load ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+// ffmpeg.wasm needs SharedArrayBuffer, which only exists on a cross-origin-isolated page.
+// That means the server must send:
+//   Cross-Origin-Opener-Policy: same-origin
+//   Cross-Origin-Embedder-Policy: require-corp
+function checkCrossOriginIsolation() {
+  if (typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated) return;
+  throw new Error(
+    'This page is not cross-origin isolated, so the browser has no SharedArrayBuffer to give the ' +
+    'encoder. Add Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: require-corp ' +
+    'response headers on whatever is hosting this page (a vercel.json is included alongside this file for Vercel), then reload.'
+  );
+}
+
+// Tries multiple CDNs in case one is blocked or unreachable.
+async function ensureFFmpegLib() {
+  checkCrossOriginIsolation();
+  if (window.FFmpeg && window.FFmpeg.createFFmpeg) return;
+  const sources = [
+    'https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js',
+    'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js'
+  ];
+  let lastErr = null;
+  for (const src of sources) {
+    try {
+      await loadScriptTag(src);
+      if (window.FFmpeg && window.FFmpeg.createFFmpeg) return;
+    } catch (e) { lastErr = e; }
+  }
+  throw new Error('Could not load the ffmpeg.wasm library — check your internet connection. ' + (lastErr ? lastErr.message : ''));
+}
+
+function getFFmpegInstance() {
+  if (ffmpeg) return ffmpeg;
+  const { createFFmpeg, fetchFile } = window.FFmpeg;
+  fetchFileFn = fetchFile;
+  ffmpeg = createFFmpeg({
+    log: false,
+    corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
+  });
+  return ffmpeg;
+}
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const fileInfo = document.getElementById('fileInfo');
+const startBtn = document.getElementById('startBtn');
+const crfSlider = document.getElementById('crf');
+const crfVal = document.getElementById('crfVal');
+const crfSpecVal = document.getElementById('crfSpecVal');
+const fitMode = document.getElementById('fitMode');
+const trimEnabled = document.getElementById('trimEnabled');
+const trimStart = document.getElementById('trimStart');
+const trimDuration = document.getElementById('trimDuration');
+const progressWrap = document.getElementById('progressWrap');
+const progressFill = document.getElementById('progressFill');
+const progressText = document.getElementById('progressText');
+const statusEl = document.getElementById('status');
+const logWrap = document.getElementById('logWrap');
+const logEl = document.getElementById('log');
+const resultEl = document.getElementById('result');
+const outputVideo = document.getElementById('outputVideo');
+const downloadBtn = document.getElementById('downloadBtn');
+const sizeInfo = document.getElementById('sizeInfo');
+const ratioInfo = document.getElementById('ratioInfo');
+
+let lastBlob = null;
+let lastFilename = 'compressed.mp4';
+
+downloadBtn.addEventListener('click', async () => {
+  if (!lastBlob) return;
+  try {
+    const downloads = (window.claude && typeof window.claude.use === 'function')
+      ? await window.claude.use('downloads')
+      : null;
+    if (downloads) {
+      await downloads.save({ filename: lastFilename, data: lastBlob });
+      return;
+    }
+  } catch (err) {
+    console.error(err);
+  }
+  // Fallback for when opened as a plain local/hosted HTML file (no downloads capability).
+  const url = URL.createObjectURL(lastBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = lastFilename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+});
+
+let selectedFile = null;
+let ffmpegLoaded = false;
+
+crfSlider.addEventListener('input', () => {
+  crfVal.textContent = crfSlider.value;
+  crfSpecVal.textContent = crfSlider.value;
+});
+
+const lengthSpec = document.getElementById('lengthSpec');
+function updateLengthSpec() {
+  trimStart.disabled = !trimEnabled.checked;
+  trimDuration.disabled = !trimEnabled.checked;
+  lengthSpec.textContent = trimEnabled.checked
+    ? `trimmed to ${trimDuration.value || 30}s (from ${trimStart.value || 0}s)`
+    : 'full length (no trim)';
+}
+[trimEnabled, trimStart, trimDuration].forEach(el => el.addEventListener('input', updateLengthSpec));
+updateLengthSpec();
+
+dropzone.addEventListener('click', () => fileInput.click());
+['dragenter','dragover'].forEach(evt =>
+  dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('drag'); })
+);
+['dragleave','drop'].forEach(evt =>
+  dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('drag'); })
+);
+dropzone.addEventListener('drop', e => {
+  if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files.length) setFile(e.target.files[0]);
+});
+
+function setFile(file) {
+  selectedFile = file;
+  fileInfo.textContent = `${file.name} (${formatBytes(file.size)})`;
+  startBtn.disabled = false;
+  resultEl.style.display = 'none';
+  statusEl.textContent = '';
+  statusEl.className = '';
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  const units = ['KB','MB','GB'];
+  let i = -1;
+  do { bytes /= 1024; i++; } while (bytes >= 1024 && i < units.length - 1);
+  return bytes.toFixed(1) + ' ' + units[i];
+}
+
+function appendLog(line) {
+  logWrap.style.display = 'block';
+  logEl.textContent += line + '\n';
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+startBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+  startBtn.disabled = true;
+  progressWrap.style.display = 'block';
+  statusEl.textContent = '';
+  statusEl.className = '';
+  progressFill.style.width = '0%';
+  logEl.textContent = '';
+
+  try {
+    await ensureFFmpegLib();
+    const fm = getFFmpegInstance();
+
+    if (!ffmpegLoaded) {
+      progressText.textContent = 'Loading encoder (first run only)…';
+      fm.setLogger(({ message }) => appendLog(message));
+      fm.setProgress(({ ratio }) => {
+        if (ratio >= 0 && ratio <= 1) {
+          progressFill.style.width = (ratio * 100).toFixed(0) + '%';
+          progressText.textContent = 'Encoding… ' + (ratio * 100).toFixed(0) + '%';
+        }
+      });
+      await fm.load();
+      ffmpegLoaded = true;
+    }
+
+    progressText.textContent = 'Reading file…';
+    const inExt = (selectedFile.name.split('.').pop() || 'mp4').toLowerCase();
+    const inputName = 'input.' + inExt;
+    const outputName = 'output.mp4';
+    fm.FS('writeFile', inputName, await fetchFileFn(selectedFile));
+
+    const crf = crfSlider.value;
+    const vf = fitMode.value === 'fill'
+      ? 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30'
+      : 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,fps=30';
+
+    const args = [];
+    if (trimEnabled.checked) {
+      args.push('-ss', String(trimStart.value || 0));
+    }
+    args.push('-i', inputName);
+    if (trimEnabled.checked) {
+      args.push('-t', String(trimDuration.value || 30));
+    }
+    args.push(
+      '-vf', vf,
+      '-c:v', 'libx264',
+      '-profile:v', 'high',
+      '-pix_fmt', 'yuv420p',
+      '-crf', String(crf),
+      '-maxrate', '5M',
+      '-bufsize', '10M',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-movflags', '+faststart',
+      outputName
+    );
+
+    progressText.textContent = 'Encoding…';
+    await fm.run(...args);
+
+    const data = fm.FS('readFile', outputName);
+    const blob = new Blob([data.buffer], { type: 'video/mp4' });
+    const url = URL.createObjectURL(blob);
+
+    outputVideo.src = url;
+    const outName = selectedFile.name.replace(/\.[^/.]+$/, '') + '_compressed.mp4';
+    lastBlob = blob;
+    lastFilename = outName;
+
+    sizeInfo.textContent = `${formatBytes(selectedFile.size)} → ${formatBytes(blob.size)}`;
+    const pct = ((1 - blob.size / selectedFile.size) * 100).toFixed(0);
+    ratioInfo.textContent = pct > 0 ? `${pct}% smaller` : `${Math.abs(pct)}% larger`;
+
+    resultEl.style.display = 'block';
+    statusEl.textContent = 'Done.';
+    statusEl.className = 'ok';
+    progressText.textContent = 'Complete';
+
+    fm.FS('unlink', inputName);
+    fm.FS('unlink', outputName);
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Failed: ' + (err && err.message ? err.message : String(err));
+    statusEl.className = 'err';
+    progressText.textContent = 'Error';
+  } finally {
+    startBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
