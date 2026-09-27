@@ -4,33 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Video Compressor — 1080×1920 H.264</title>
-<script>
-// Registers coi-sw.js so this page can become cross-origin isolated even on
-// a static host (like GitHub Pages) that can't set custom response headers.
-// If the page is already isolated (e.g. Vercel with the headers in
-// vercel.json) this does nothing.
-(function () {
-  if (window.crossOriginIsolated || !('serviceWorker' in navigator)) return;
-  const reloadedKey = 'coiSwReloaded';
-  navigator.serviceWorker.register('./coi-sw.js').then(function (reg) {
-    if (reg.active && !navigator.serviceWorker.controller) {
-      // Registered but not yet controlling this load — reload once to pick it up.
-      if (!sessionStorage.getItem(reloadedKey)) {
-        sessionStorage.setItem(reloadedKey, '1');
-        window.location.reload();
-      }
-    }
-  }).catch(function (err) {
-    console.warn('coi-sw registration failed:', err);
-  });
-  navigator.serviceWorker.addEventListener('controllerchange', function () {
-    if (!sessionStorage.getItem(reloadedKey)) {
-      sessionStorage.setItem(reloadedKey, '1');
-      window.location.reload();
-    }
-  });
-})();
-</script>
+<!--
+  coi-serviceworker.js must sit next to this HTML file (same folder, both
+  provided). It makes the page cross-origin isolated (required for
+  SharedArrayBuffer) on static hosts like GitHub Pages that can't set custom
+  response headers. MIT licensed, by Guido Zuidhof and contributors:
+  https://github.com/gzuidhof/coi-serviceworker
+-->
+<script src="coi-serviceworker.js"></script>
 <style>
   :root{
     --bg:#f4f5f7; --panel:#ffffff; --border:#d9dce1; --text:#1f2328;
@@ -176,8 +157,9 @@ function checkCrossOriginIsolation() {
   if (typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated) return;
   throw new Error(
     'This page is not cross-origin isolated, so the browser has no SharedArrayBuffer to give the ' +
-    'encoder. Add Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: require-corp ' +
-    'response headers on whatever is hosting this page (a vercel.json is included alongside this file for Vercel), then reload.'
+    'encoder. On Vercel, add the headers from vercel.json (included alongside this file). On a static ' +
+    'host with no custom-header support (GitHub Pages, etc.), make sure coi-serviceworker.js is sitting ' +
+    'next to this HTML file and reload once — see the notes under this file for the exact setup.'
   );
 }
 
