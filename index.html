@@ -298,6 +298,18 @@ function appendLog(line) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+function readFileWithProgress(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    };
+    reader.onload = () => resolve(new Uint8Array(reader.result));
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 startBtn.addEventListener('click', async () => {
   if (!selectedFile) return;
   startBtn.disabled = true;
@@ -324,11 +336,16 @@ startBtn.addEventListener('click', async () => {
       ffmpegLoaded = true;
     }
 
-    progressText.textContent = 'Reading file…';
+    progressText.textContent = 'Reading file… 0%';
+    progressFill.style.width = '0%';
     const inExt = (selectedFile.name.split('.').pop() || 'mp4').toLowerCase();
     const inputName = 'input.' + inExt;
     const outputName = 'output.mp4';
-    fm.FS('writeFile', inputName, await fetchFileFn(selectedFile));
+    const fileData = await readFileWithProgress(selectedFile, (ratio) => {
+      progressFill.style.width = (ratio * 100).toFixed(0) + '%';
+      progressText.textContent = 'Reading file… ' + (ratio * 100).toFixed(0) + '%';
+    });
+    fm.FS('writeFile', inputName, fileData);
 
     const crf = crfSlider.value;
     const vf = fitMode.value === 'fill'
